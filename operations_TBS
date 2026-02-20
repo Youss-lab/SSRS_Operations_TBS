@@ -1,0 +1,240 @@
+USE [FIBO_SIDU]
+GO
+
+/****** Object:  StoredProcedure [dbo].[SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient]    Script Date: 20/02/2026 17:08:33 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient]') AND type in (N'P', N'PC'))
+BEGIN
+EXEC dbo.sp_executesql @statement = N'CREATE PROCEDURE [dbo].[SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient] AS' 
+END
+GO
+
+
+
+
+
+ALTER procedure [dbo].[SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient]
+(
+	@type_valeur		VARCHAR(200),
+    @Isin				VARCHAR(50)		= NULL,
+	@ClientId			VARCHAR(50)		= NULL,
+	@Periode			CHAR(1)
+)
+AS
+
+DECLARE
+	@DateDebut			DATETIME		= NULL,
+    @DateFin			DATETIME		= NULL,
+	@SSRS_user			VARCHAR(50)
+
+
+If (@Periode = 'J')
+    Begin
+		select @DateDebut = convert(char(8), getdate(), 112)+' 00:00:00'
+		select @DateFin = convert(char(8), getdate(), 112)+' 23:59:59'
+    End
+
+
+
+If (@Periode = 'M')
+	Begin
+		select @DateDebut = convert(char(8), dateadd(month, -1, dateadd(day, -datepart(day,GETDATE())+1, getdate())), 112)+' 00:00:00'
+		select @DateFin = convert(char(8),dateadd(day, -datepart(day,GETDATE()), getdate()), 112)+' 23:59:59'             
+	End
+
+
+/*Variables pour alimenter la table SSRS_RECENSEMENT_TEMPS_PROC FIBO_REF: */
+	DECLARE				@SSRS_tracer_temps_debut		DATETIME
+	DECLARE				@SSRS_tracer_temps_fin			DATETIME
+	DECLARE				@nbre_lignes					INTEGER
+	SET					@SSRS_tracer_temps_debut		= GETDATE()
+	SET					@nbre_lignes					= 0
+
+
+
+--Mise en place de l'abonnement
+
+	If @Periode = 'J'
+	BEGIN 
+
+		select		concat('SSRS_FRBS_Reporting_sur_toutes_les_operations_TBS_pour_UnIsin_UnClient_',CONVERT(date,GETDATE())) 	as Name_Report,
+					a.PATH_DEPOSE																								as Path_Report
+		from		FIBO_REF..SSRS_LISTE_ABONNEMENTS a
+		inner join	FIBO_REF..BDD_ENVIRONNEMENT      b
+		on			a.ENVIRONNEMENT = b.ENVIRONNEMENT
+		where		a.NOM_RAPPORT = 'SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient'
+		and			a.DESCRIPTION_ABONNEMENT like 'Envoi du rapport quotidiennement à 17h45 à la fin de la%'
+
+	END
+	
+	If @Periode = 'M'
+	BEGIN 
+
+		select		concat('SSRS_FRBS_Reporting_sur_toutes_les_operations_TBS_pour_UnIsin_UnClient_',DATEADD(MONTH, -1, GETDATE())) as Name_Report,
+					a.PATH_DEPOSE																									as Path_Report
+		from		FIBO_REF..SSRS_LISTE_ABONNEMENTS a
+		inner join	FIBO_REF..BDD_ENVIRONNEMENT      b
+		on			a.ENVIRONNEMENT = b.ENVIRONNEMENT
+		where		a.NOM_RAPPORT = 'SSRS_FRBS_Reporting_Operations_TBS_PourUnIsin_UnClient'
+		and			a.DESCRIPTION_ABONNEMENT like 'Envoi du rapport quotidiennement à 17h45 à la fin de la%'
+
+	END
+
+
+--===================================================
+--Dataset: Reporting_Operations_TBS_UnIsin_UnClient
+--===================================================
+
+IF @type_valeur = 'FRBS_Reporting_Operations_TBS_UnIsin_UnClient'
+	BEGIN
+
+		SELECT
+			bs_histo_order.time_creation											AS 'CREATION TIME ORDER',
+			CASE 
+				WHEN bs_histo_order.lastaction_time IS NULL 
+				THEN NULL
+				ELSE 
+					DATEADD(hour, 
+						case 
+							when TRY_CONVERT(DATETIME,bs_histo_order.lastaction_time)
+                  				between dat_cgt.summer_time
+                				and dat_cgt.winter_time 
+           					then fus_hre.summer_utc_offset_hours
+           					else fus_hre.utc_offset_hours 
+						end, 
+						TRY_CONVERT(DATETIME,bs_histo_order.lastaction_time) 
+					)
+				END																		AS 'LAST ACTION TIME',
+				bs_histo_order.accountid												AS 'ACCOUNT',
+				bs_histo_order.traderid													AS 'PORTFOLIO MANAGER',
+				bs_histo_order.persisted_AUDITALLOC										AS 'PERSISTED_AUDITALLOC',
+				bs_histo_order.persisted_RTOE											AS 'RTOE',
+				bs_histo_trade.brokerid													AS 'BROKER',
+				bs_histo_order.persisted_prestationbroker								AS 'PRESTATION',
+				bs_histo_order.side														AS 'SIDE',
+				bs_histo_order.qty_size													AS 'QTY',
+				MPG_RVA_ULK.altid_isin													AS 'ISIN',
+				MPG_RVA_ULK.altid_symbol												AS 'ALTID_SYMBOL',
+				MPG_RVA_ULK.DeviseUllink												AS 'CCY',
+				MPG_RVA_ULK.CodeMic														AS 'MIC',
+				bs_histo_order.type														AS 'ORDTYPE',
+				bs_histo_order.timeinforce_type											AS 'VALIDITY',
+				bs_histo_order.timeinforce_expire										AS 'TIMEINFORCE_EXPIRE',
+				bs_histo_order.executionstate											AS 'EXEC STATUS',
+				MPG_RVA_ULK.ComptaTitres												AS 'PRICE TYPE - COMPTA TITRES',
+				bs_histo_order.qty_cum													AS 'QTY_CUM',
+				bs_histo_order.price_avg												AS 'PRICE_AVG',
+				bs_histo_order.qty_leaves												AS 'QTY_LEAVES',
+				SUM(bs_histo_trade.ENT_trade_amount)									AS 'SUM_TRADE_AMOUNT',
+				SUM(bs_histo_trade.ENT_euro_rate * bs_histo_trade.ENT_trade_amount)		AS 'SUM_EUR_TRADE_AMOUNT',
+				bs_histo_order.terminatereason											AS 'TERMINATE REASON',
+				MPG_RVA_ULK.UllinkId													AS 'ID ULLINK',
+				bs_histo_link.client_order_id											AS 'REFERENCE ORDRE CLIENT',
+				ENT_TIE.Id																AS 'CLIENT_TIERS_ID',
+				CASE
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'E%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'RSS%') THEN 'Actions'
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'CE%') THEN 'ETF'
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'RW%') THEN 'Warrants'
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'D%') THEN 'Obligations'
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'F%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'O%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'RF%') THEN 'Dérivés Listés'
+					WHEN	(VALEUR_CGEN.CodeCFI LIKE 'C%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'RSX%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'RAX%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'X%'
+							OR VALEUR_CGEN.CodeCFI LIKE 'RXXXXX%'
+							OR VALEUR_CGEN.CodeCFI IS NULL) THEN 'Autres Instruments'
+				END																		AS 'ASSET CLASS',
+				bs_histo_order.time_creation											AS 'CREATION TIME',
+				bs_histo_trade.time_creation											AS 'CREATION TIME TRADE',
+				bs_histo_order.persisted_refclient										AS 'REF CLIENT',		
+				ENT_TIE.description														AS 'DESCRIPTION CLIENT',
+				VALEUR_CGEN.Libelle														AS 'LIBELLE CLIENT',
+				bs_histo_trade.quantity													AS 'QTY TRADE',
+				bs_histo_order.instructions_trading										AS 'INSTRUCTIONS TRADING',
+				bs_histo_order.persisted_comments										AS 'PERSISTED COMMENTS',
+				bs_histo_order.notes													AS 'NOTES',
+				VALEUR_CGEN.ContratMultiplicateur										AS 'CONTRACT MULTIPLIER'
+		    
+		    
+		FROM
+		    FIBO_DATA..best_ullink_bs_histo_trade bs_histo_trade
+		RIGHT OUTER JOIN
+		    FIBO_DATA..best_ullink_bs_histo_link bs_histo_link ON bs_histo_trade.ul_id = bs_histo_link.trade_id
+		INNER JOIN
+		    FIBO_DATA..best_ullink_bs_histo_order bs_histo_order ON bs_histo_link.client_order_id = bs_histo_order.ul_id
+		INNER JOIN
+		    FIBO_REF..ENT_TIME_CHANGES dat_cgt ON CONVERT(char(4), bs_histo_order.lastaction_time, 112) = dat_cgt.year  
+		INNER JOIN
+		    FIBO_REF..ENT_TIME_ZONE fus_hre ON fus_hre.code_mic = 'XPAR' 
+		INNER JOIN
+		    FIBO_REF..ENT_VALEUR_MAPPING_RVA_ULK MPG_RVA_ULK ON bs_histo_link.refinstrument = MPG_RVA_ULK.UllinkId
+		INNER JOIN
+		    FIBO_REF..VALEUR_CGEN_COURANT VALEUR_CGEN ON VALEUR_CGEN.ValeurId = bs_histo_link.refinstrument
+		INNER JOIN
+		    FIBO_REF..ENT_TIERS_ULK ENT_TIE ON bs_histo_link.client_id = ENT_TIE.Id AND ENT_TIE.IndDonneesCourante = 1 and ENT_TIE.Id = '21270'
+		WHERE
+		    MPG_RVA_ULK.altid_isin = @Isin
+		    AND (
+		        bs_histo_trade.status <> 'canceled'
+		        OR bs_histo_trade.status IS NULL
+		    )
+			AND bs_histo_order.ENT_time_creation BETWEEN @DateDebut AND @DateFin
+		    AND bs_histo_trade.ENT_time_creation BETWEEN @DateDebut AND @DateFin
+		    
+		GROUP BY
+		    bs_histo_link.client_order_id,
+		    bs_histo_trade.time_creation,
+		    bs_histo_order.time_creation,
+		    dat_cgt.summer_time,
+		    dat_cgt.winter_time,
+		    fus_hre.summer_cet_offset_hours,
+		    fus_hre.utc_offset_hours,
+		    fus_hre.summer_utc_offset_hours,
+		    bs_histo_order.persisted_refclient,
+		    VALEUR_CGEN.CodeCFI,
+		    bs_histo_order.lastaction_time,
+		    bs_histo_order.traderid,
+		    ENT_TIE.description,
+		    bs_histo_order.accountid,
+		    bs_histo_order.persisted_AUDITALLOC,
+		    bs_histo_trade.brokerid,
+		    bs_histo_order.persisted_prestationbroker,
+		    bs_histo_order.side,
+		    bs_histo_order.qty_size,
+		    VALEUR_CGEN.Libelle,
+		    MPG_RVA_ULK.altid_isin,
+		    MPG_RVA_ULK.DeviseUllink,
+		    MPG_RVA_ULK.CodeMic,
+		    bs_histo_order.type,
+		    bs_histo_order.timeinforce_type,
+		    bs_histo_order.timeinforce_expire,
+		    bs_histo_trade.quantity,
+		    bs_histo_order.instructions_trading,
+		    bs_histo_order.persisted_comments,
+		    bs_histo_order.notes,
+		    VALEUR_CGEN.ContratMultiplicateur,
+		    MPG_RVA_ULK.ComptaTitres,
+		    MPG_RVA_ULK.UllinkId,
+		    MPG_RVA_ULK.altid_symbol,
+		    bs_histo_order.terminatereason,
+		    bs_histo_order.qty_leaves,
+		    bs_histo_order.qty_cum,
+			bs_histo_order.price_avg,
+		    bs_histo_order.executionstate,
+		    bs_histo_order.persisted_RTOE,
+		    ENT_TIE.Id
+
+			SET			@nbre_lignes				= @@ROWCOUNT
+
+		END
+GO
+
+
